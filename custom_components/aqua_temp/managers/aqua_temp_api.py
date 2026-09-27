@@ -247,22 +247,28 @@ class AquaTempAPI:
         param_device_code = self._config_manager.get_api_param(APIParam.DeviceCode)
         param_protocol_code = self._config_manager.get_api_param(APIParam.ProtocolCode)
 
+        pcs_to_update = []
+        for pc in [target_temperature_pc, set_temp_pc_key]:
+            if pc and pc not in pcs_to_update:
+                pcs_to_update.append(pc)
+
         request_data = {
             DEVICE_CONTROL_PARAM: [
                 {
                     param_device_code: device_code,
-                    param_protocol_code: target_temperature_pc,
+                    param_protocol_code: pc,
                     DEVICE_CONTROL_VALUE: temperature,
-                },
-                {
-                    param_device_code: device_code,
-                    param_protocol_code: set_temp_pc_key,
-                    DEVICE_CONTROL_VALUE: temperature,
-                },
+                }
+                for pc in pcs_to_update
             ]
         }
 
-        await self._perform_action(request_data, set_temp_pc_key)
+        op_name = target_temperature_pc or set_temp_pc_key or "Set_Temp"
+        await self._perform_action(request_data, op_name)
+
+        if device_code in self._devices:
+            for pc in pcs_to_update:
+                self._devices[device_code][pc] = str(temperature)
 
     async def _set_power_mode(self, device_code: str, value):
         """Set new target power mode."""
@@ -275,13 +281,90 @@ class AquaTempAPI:
             DEVICE_CONTROL_PARAM: [
                 {
                     param_device_code: device_code,
-                    param_protocol_code: power_pc_key.lower(),
+                    param_protocol_code: power_pc_key,
                     DEVICE_CONTROL_VALUE: value,
                 }
             ]
         }
 
         await self._perform_action(request_data, power_pc_key)
+
+        if device_code in self._devices:
+            self._devices[device_code][power_pc_key] = str(value)
+
+    async def set_power(self, device_code: str, is_on: bool):
+        """Set device power state directly."""
+        power_mode = POWER_MODE_ON if is_on else POWER_MODE_OFF
+        await self._set_power_mode(device_code, power_mode)
+
+    async def set_operation_mode(self, device_code: str, operation_value: str):
+        """Set device operation mode directly (e.g. for water heater)."""
+        mode_pc_key = (
+            self._config_manager.get_pc_key(device_code, CONFIG_SET_MODE)
+            or "Mode"
+        )
+        set_temp_pc_key = (
+            self._config_manager.get_pc_key(device_code, CONFIG_SET_TEMPERATURE)
+            or "R01"
+        )
+        param_device_code = self._config_manager.get_api_param(APIParam.DeviceCode)
+        param_protocol_code = self._config_manager.get_api_param(APIParam.ProtocolCode)
+
+        is_on = self.get_device_power(device_code)
+
+        target_temperature = self.get_device_target_temperature(device_code)
+        if target_temperature is None:
+            device_data = self.get_device_data(device_code) or {}
+            raw_temp = (
+                device_data.get(set_temp_pc_key)
+                or device_data.get("R01")
+                or device_data.get("Set_Temp")
+            )
+            if raw_temp not in (None, ""):
+                try:
+                    target_temperature = float(str(raw_temp))
+                except (ValueError, TypeError):
+                    target_temperature = 50.0
+            else:
+                target_temperature = 50.0
+
+        control_params = []
+
+        if not is_on:
+            power_pc_key = (
+                self._config_manager.get_pc_key(device_code, CONFIG_SET_POWER)
+                or "Power"
+            )
+            control_params.append({
+                param_device_code: device_code,
+                param_protocol_code: power_pc_key,
+                DEVICE_CONTROL_VALUE: POWER_MODE_ON,
+            })
+
+        if set_temp_pc_key and target_temperature is not None:
+            control_params.append({
+                param_device_code: device_code,
+                param_protocol_code: set_temp_pc_key,
+                DEVICE_CONTROL_VALUE: target_temperature,
+            })
+
+        control_params.append({
+            param_device_code: device_code,
+            param_protocol_code: mode_pc_key,
+            DEVICE_CONTROL_VALUE: str(operation_value),
+        })
+
+        request_data = {DEVICE_CONTROL_PARAM: control_params}
+        await self._perform_action(request_data, mode_pc_key)
+
+        if device_code in self._devices:
+            self._devices[device_code][mode_pc_key] = str(operation_value)
+            if not is_on:
+                power_pc_key = (
+                    self._config_manager.get_pc_key(device_code, CONFIG_SET_POWER)
+                    or "Power"
+                )
+                self._devices[device_code][power_pc_key] = POWER_MODE_ON
 
     async def _set_hvac_mode(self, device_code: str, hvac_mode: HVACMode):
         """Set new target hvac mode."""
@@ -376,6 +459,11 @@ class AquaTempAPI:
                     )
 
                 else:
+                    _LOGGER.error(
+                        f"DeviceControl failed for {operation}, "
+                        f"Code: {error_code}, Msg: {error_msg}, "
+                        f"Request: {request_data}"
+                    )
                     error = OperationFailedException(
                         operation, request_data, f"{error_code}: {error_msg}"
                     )
@@ -654,73 +742,107 @@ class AquaTempAPI:
         return device_data
 
     def get_device_target_temperature(self, device_code: str) -> float | None:
+        device_data = self.get_device_data(device_code) or {}
         hvac_mode = self.get_device_hvac_mode(device_code)
         target_temperature_pc = self._get_target_temperature_protocol_code(
             device_code, hvac_mode
         )
 
-        device_data = self.get_device_data(device_code)
-        target_temperature = device_data.get(target_temperature_pc)
+        target_temperature = (
+            device_data.get(target_temperature_pc) if target_temperature_pc else None
+        )
 
-        if target_temperature == "":
-            target_temperature = None
+        if target_temperature in ("", None):
+            set_temp_pc = self._config_manager.get_pc_key(
+                device_code, CONFIG_SET_TEMPERATURE
+            )
+            if set_temp_pc:
+                target_temperature = device_data.get(set_temp_pc)
 
-        if target_temperature is not None:
-            target_temperature = float(str(target_temperature))
+        if target_temperature in ("", None):
+            for fallback_code in ["R01", "Set_Temp"]:
+                val = device_data.get(fallback_code)
+                if val not in ("", None):
+                    target_temperature = val
+                    break
+
+        if target_temperature not in ("", None):
+            try:
+                target_temperature = float(str(target_temperature))
+            except (ValueError, TypeError):
+                target_temperature = None
 
         return target_temperature
 
     def get_device_current_temperature(self, device_code: str) -> float | None:
-        device_data = self.get_device_data(device_code)
+        device_data = self.get_device_data(device_code) or {}
         pc_key = self._config_manager.get_pc_key(
             device_code, CONFIG_SET_CURRENT_TEMPERATURE
         )
-        current_temperature = device_data.get(pc_key)
+        current_temperature = device_data.get(pc_key) if pc_key else None
 
-        if current_temperature == "":
-            current_temperature = None
+        if current_temperature in ("", None):
+            for fallback_code in ["T10", "T02"]:
+                val = device_data.get(fallback_code)
+                if val not in ("", None):
+                    current_temperature = val
+                    break
 
-        if current_temperature is not None:
-            current_temperature = float(str(current_temperature))
+        if current_temperature not in ("", None):
+            try:
+                current_temperature = float(str(current_temperature))
+            except (ValueError, TypeError):
+                current_temperature = None
 
         return current_temperature
 
     def get_device_minimum_temperature(self, device_code: str) -> float | None:
-        device_data = self.get_device_data(device_code)
-
+        device_data = self.get_device_data(device_code) or {}
         hvac_mode = self.get_device_hvac_mode(device_code)
         key = self._config_manager.get_hvac_mode_pc_key(
             device_code, hvac_mode, CONFIG_HVAC_MINIMUM
         )
 
-        temperature = device_data.get(key)
+        temperature = None
+        if key is not None and key in device_data:
+            temperature = device_data.get(key)
+        elif key is not None and (
+            isinstance(key, (int, float))
+            or (isinstance(key, str) and key.replace(".", "", 1).isdigit())
+        ):
+            temperature = key
 
-        if temperature == "":
-            temperature = None
+        if temperature in ("", None):
+            temperature = 30.0
 
-        if temperature is not None:
-            temperature = float(str(temperature))
-
-        return temperature
+        try:
+            return float(str(temperature))
+        except (ValueError, TypeError):
+            return 30.0
 
     def get_device_maximum_temperature(self, device_code: str) -> float | None:
-        device_data = self.get_device_data(device_code)
-
+        device_data = self.get_device_data(device_code) or {}
         hvac_mode = self.get_device_hvac_mode(device_code)
-
         key = self._config_manager.get_hvac_mode_pc_key(
             device_code, hvac_mode, CONFIG_HVAC_MAXIMUM
         )
 
-        temperature = device_data.get(key)
+        temperature = None
+        if key is not None and key in device_data:
+            temperature = device_data.get(key)
+        elif key is not None and (
+            isinstance(key, (int, float))
+            or (isinstance(key, str) and key.replace(".", "", 1).isdigit())
+        ):
+            temperature = key
 
-        if temperature == "":
-            temperature = None
+        if temperature in ("", None):
+            temperature = 65.0
 
-        if temperature is not None:
-            temperature = float(str(temperature))
-
-        return temperature
+        try:
+            return float(str(temperature))
+        except (ValueError, TypeError):
+            return 65.0
 
     def get_device_hvac_mode(self, device_code: str) -> HVACMode:
         device_data = self.get_device_data(device_code)
@@ -730,7 +852,15 @@ class AquaTempAPI:
         hvac_mode = self._config_manager.get_hvac_reverse_mapping(
             device_code, device_mode
         )
-        result = HVACMode(hvac_mode)
+        if hvac_mode is None:
+            if not self.get_device_power(device_code):
+                return HVACMode.OFF
+            return HVACMode.HEAT
+
+        try:
+            result = HVACMode(hvac_mode)
+        except (ValueError, TypeError):
+            result = HVACMode.HEAT
 
         return result
 

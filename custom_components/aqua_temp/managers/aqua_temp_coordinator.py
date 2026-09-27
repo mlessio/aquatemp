@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from homeassistant.components.climate import HVACMode
@@ -150,12 +151,22 @@ class AquaTempCoordinator(DataUpdateCoordinator):
 
     async def set_hvac_mode(self, device_code: str, hvac_mode: HVACMode):
         await self._api.set_hvac_mode(device_code, hvac_mode)
-
+        await asyncio.sleep(1)
         await self.async_request_refresh()
 
     async def set_temperature(self, device_code: str, temperature: float):
         await self._api.set_temperature(device_code, temperature)
+        await asyncio.sleep(1)
+        await self.async_request_refresh()
 
+    async def set_power(self, device_code: str, is_on: bool):
+        await self._api.set_power(device_code, is_on)
+        await asyncio.sleep(1)
+        await self.async_request_refresh()
+
+    async def set_operation_mode(self, device_code: str, operation_value: str):
+        await self._api.set_operation_mode(device_code, operation_value)
+        await asyncio.sleep(1)
         await self.async_request_refresh()
 
     async def set_fan_mode(self, device_code: str, fan_mode):

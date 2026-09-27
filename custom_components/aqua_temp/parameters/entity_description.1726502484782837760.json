@@ -445,16 +445,18 @@
   {
     "key": "O01",
     "name": "Compressor [O01]",
-    "platform": "sensor",
-    "device_class": null,
-    "unit_of_measurement": null
+    "platform": "binary_sensor",
+    "device_class": "running",
+    "unit_of_measurement": null,
+    "on_value": "1"
   },
   {
     "key": "O02",
     "name": "Electrical heater [O02]",
-    "platform": "sensor",
-    "device_class": null,
-    "unit_of_measurement": null
+    "platform": "binary_sensor",
+    "device_class": "heat",
+    "unit_of_measurement": null,
+    "on_value": "1"
   },
   {
     "key": "O03",

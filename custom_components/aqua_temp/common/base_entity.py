@@ -107,3 +107,9 @@ class BaseEntity(CoordinatorEntity):
     @property
     def data(self) -> dict | None:
         return self._data
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass, register listener and update attributes immediately."""
+        await super().async_added_to_hass()
+        if hasattr(self, "_handle_coordinator_update"):
+            self._handle_coordinator_update()
