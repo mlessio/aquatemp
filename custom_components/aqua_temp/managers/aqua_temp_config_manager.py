@@ -381,7 +381,6 @@ class AquaTempConfigManager:
             await self._store.async_save(store_data)
 
     async def _load_entity_descriptions(self, product_id: str):
-        entities = copy(DEFAULT_ENTITY_DESCRIPTIONS)
         file_path = self._get_product_file(
             ProductParameter.ENTITY_DESCRIPTION, product_id
         )
@@ -394,6 +393,17 @@ class AquaTempConfigManager:
         await file.close()
 
         json_data = json.loads(json_str)
+
+        has_water_heater = any(
+            data_item.get("platform") == Platform.WATER_HEATER
+            for data_item in json_data
+        )
+
+        entities = [
+            copy(e)
+            for e in DEFAULT_ENTITY_DESCRIPTIONS
+            if not (has_water_heater and e.platform == Platform.CLIMATE)
+        ]
 
         for data_item in json_data:
             platform = data_item.get("platform")

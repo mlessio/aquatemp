@@ -4,6 +4,7 @@ import sys
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
@@ -33,6 +34,27 @@ async def async_setup_base_entry(
             config_manager = coordinator.config_manager
 
             entity_descriptions = config_manager.get_entity_descriptions(device_code)
+
+            if platform == Platform.CLIMATE:
+                has_water_heater = any(
+                    ed.platform == Platform.WATER_HEATER
+                    for ed in entity_descriptions
+                )
+                if has_water_heater:
+                    try:
+                        ent_reg = er.async_get(hass)
+                        unique_id = slugify(f"{DOMAIN}_{Platform.CLIMATE}_Mode_{device_code}")
+                        entity_id = ent_reg.async_get_entity_id(
+                            Platform.CLIMATE, DOMAIN, unique_id
+                        )
+                        if entity_id:
+                            _LOGGER.info(
+                                f"Removing obsolete climate entity {entity_id} "
+                                f"(device uses water_heater platform)"
+                            )
+                            ent_reg.async_remove(entity_id)
+                    except Exception as err:
+                        _LOGGER.debug(f"Failed to remove obsolete climate entity: {err}")
 
             entities = [
                 entity_type(entity_description, coordinator, device_code)
