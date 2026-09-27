@@ -56,6 +56,22 @@ async def async_setup_base_entry(
                     except Exception as err:
                         _LOGGER.debug(f"Failed to remove obsolete climate entity: {err}")
 
+            if platform == Platform.WATER_HEATER:
+                try:
+                    ent_reg = er.async_get(hass)
+                    wh_unique_id = slugify(
+                        f"{DOMAIN}_{Platform.WATER_HEATER}_WaterHeater_{device_code}"
+                    )
+                    wh_entity_id = ent_reg.async_get_entity_id(
+                        Platform.WATER_HEATER, DOMAIN, wh_unique_id
+                    )
+                    if wh_entity_id:
+                        ent_reg.async_update_entity(
+                            wh_entity_id, has_entity_name=True, name=None
+                        )
+                except Exception as err:
+                    _LOGGER.debug(f"Failed to update water heater entity in registry: {err}")
+
             entities = [
                 entity_type(entity_description, coordinator, device_code)
                 for entity_description in entity_descriptions

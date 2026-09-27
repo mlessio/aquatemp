@@ -74,6 +74,9 @@ class AquaTempWaterHeaterEntity(BaseEntity, WaterHeaterEntity, ABC):
     ):
         super().__init__(entity_description, coordinator, device_code)
 
+        self._attr_has_entity_name = True
+        self._attr_name = None
+
         self._attr_supported_features = (
             WaterHeaterEntityFeature.TARGET_TEMPERATURE
             | WaterHeaterEntityFeature.OPERATION_MODE

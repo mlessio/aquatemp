@@ -99,13 +99,22 @@ class AquaTempCoordinator(DataUpdateCoordinator):
         param_device_id = self._config_manager.get_api_param(APIParam.DeviceId)
         param_custom_model = self._config_manager.get_api_param(APIParam.CustomModel)
 
-        device_data = self.get_device_data(device_code)
+        device_data = self.get_device_data(device_code) or {}
         device_nickname = device_data.get(param_nickname)
         device_model = device_data.get(param_custom_model)
         device_id = device_data.get(param_device_id)
 
         if param_custom_model in device_data:
             device_model = device_data.get(param_custom_model)
+
+        try:
+            from homeassistant.helpers import device_registry as dr
+            dev_reg = dr.async_get(self.hass)
+            device_entry = dev_reg.async_get_device(identifiers={(DOMAIN, device_id)})
+            if device_entry and device_entry.name_by_user:
+                device_nickname = device_entry.name_by_user
+        except Exception:
+            pass
 
         device_info = DeviceInfo(
             identifiers={(DOMAIN, device_id)},
